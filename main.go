@@ -1,14 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-
+	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
-
-	"net/http"
 )
 
 var repoCommands = make(map[string][]string)
@@ -29,6 +30,26 @@ type DockerHubRepository struct {
 	RepoName  string `json:"repo_name,omitempty"`
 }
 
+func DockerRespond(url string, response string) {
+	fmt.Println("URL:>", url)
+
+	var jsonStr = []byte(`{"state":"` + response + `"}`)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	fmt.Println("response Status:", resp.Status)
+	fmt.Println("response Headers:", resp.Header)
+	body, _ := ioutil.ReadAll(resp.Body)
+	fmt.Println("response Body:", string(body))
+}
+
 // DockerHubHandler accepts the webhook payload as produced when a build completes on hub.docker.com
 func DockerHubHandler(rw http.ResponseWriter, req *http.Request) {
 
@@ -39,6 +60,10 @@ func DockerHubHandler(rw http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		log.Println("Unable to read payload as JSON")
 		log.Println(err)
+		fmt.Fprintf(rw, "{\"state\": \"error\"}")
+		if dockerHubPayload.CallbackURL != "" {
+			DockerRespond(dockerHubPayload.CallbackURL, "error")
+		}
 		return
 	}
 
@@ -47,6 +72,10 @@ func DockerHubHandler(rw http.ResponseWriter, req *http.Request) {
 
 	if !ok { // || len(command) == 0 {
 		log.Printf("Repository \"%s\" not enabled\n", repo)
+		fmt.Fprintf(rw, "{\"state\": \"failure\"}")
+		if dockerHubPayload.CallbackURL != "" {
+			DockerRespond(dockerHubPayload.CallbackURL, "failure")
+		}
 		return
 	}
 
@@ -62,6 +91,12 @@ func DockerHubHandler(rw http.ResponseWriter, req *http.Request) {
 
 	log.Println(string(output))
 
+	// respond to callback url
+	log.Println("Replying to: " + dockerHubPayload.CallbackURL)
+	fmt.Fprintf(rw, "{\"state\": \"success\"}")
+	if dockerHubPayload.CallbackURL != "" {
+		DockerRespond(dockerHubPayload.CallbackURL, "success")
+	}
 }
 
 func main() {
